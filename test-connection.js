@@ -1,11 +1,9 @@
-// test-connection.js
 import dotenv from "dotenv";
 import { Pool } from "pg";
 
-// Load environment variables from .env
 dotenv.config({path: '.env'});
 
-const pool = new Pool();  // pg will read PGHOST, PGUSER, etc. automatically
+const pool = new Pool(); 
 
 async function testConnection() {
   try {
