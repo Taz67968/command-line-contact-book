@@ -1,10 +1,5 @@
 [
   {
-    "name": "tha",
-    "phone_number": "6893287",
-    "email": "ygaf@.co"
-  },
-  {
     "name": "hja",
     "phone_number": "678683",
     "email": "hjkadfjkf",
@@ -15,5 +10,11 @@
     "phone_number": "67868329",
     "email": "thjakdhj@.comd",
     "group": "family"
+  },
+  {
+    "name": "peter",
+    "phone_number": "679345789",
+    "email": "peter@gmail.com",
+    "group": "personal"
   }
 ]

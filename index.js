@@ -1,173 +1,232 @@
-import fs from "fs";
 import chalk from "chalk";
 import readline from "readline";
-import { group } from "console";
+import dotenv from "dotenv";
+import pkg from "pg";
+const { Pool } = pkg
 
-const CONTACTS_FILE = "./contacts.json";
-
-let contacts = [];
-if (fs.existsSync(CONTACTS_FILE)) {
-  try {
-    const data = fs.readFileSync(CONTACTS_FILE, "utf-8");
-    contacts = JSON.parse(data);
-  } catch (err) {
-    console.error(chalk.red("Error reading contacts file:"), err);
-    contacts = [];
-  }
-} else {
-  contacts = [];
-}
-
-const saveContacts = () => {
-  try {
-    fs.writeFileSync(CONTACTS_FILE, JSON.stringify(contacts, null, 2));
-  } catch (err) {
-    console.error(chalk.red("Error writing contacts file:"), err);
-  }
-};
+dotenv.config({path: '.env'});
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
 
-const addContact = (name, phone_number, email,group) => {
-  contacts.push({ name, phone_number, email, group });
-  saveContacts();
-  console.log(chalk.bold.green(`Contact added: ${name} - ${phone_number} - ${email} - ${group}`));
-};
+const pool = new Pool({
+  host: process.env.PGHOST,
+  port: process.env.PGPORT,
+  user: process.env.PGUSER,
+  password: process.env.PGPASSWORD,
+  database: process.env.PGDATABASE,
+});
 
-
-const viewContacts = () => {
-  if (contacts.length === 0) {
-    console.log(chalk.red("No contacts available."));
-  } else {
-    const header = `${"No.".padEnd(5)} ${"Name".padEnd(20)} ${"Phone Number".padEnd(20)} ${"Email"} ${"group"}`;
-    console.log(chalk.blue(header));
-    console.log(chalk.blue("-".repeat(60)));
-    contacts.forEach((contact, index) => {
-      const row = `${(index + 1).toString().padEnd(5)} ${contact.name.padEnd(20)} ${contact.phone_number.padEnd(20)} ${contact.email} ${contact.group}`;
-      console.log(chalk.yellow(row));
-    });
+const initDB = async () => {
+  const createTableQuery = `
+    CREATE TABLE IF NOT EXISTS contacts (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(100),
+      phone_number VARCHAR(50),
+      email VARCHAR(100)
+    );
+  `;
+  try {
+    await pool.query(createTableQuery);
+    console.log(
+      chalk.green("Database initialized and contacts table is ready.")
+    );
+  } catch (error) {
+    console.error(chalk.red("Error initializing the database:"), error);
   }
 };
 
-const removeContact = (contactNumber) => {
-  if (contactNumber > 0 && contactNumber <= contacts.length) {
-    contacts.splice(contactNumber - 1, 1);
-    saveContacts();
-    console.log(chalk.red("Contact removed."));
-  } else {
-    console.log(chalk.red("Invalid contact number."));
+const addContact = async (name, phone_number, email) => {
+  const insertQuery = `
+    INSERT INTO contacts (name, phone_number, email)
+    VALUES ($1, $2, $3)
+    RETURNING *;
+  `;
+  try {
+    const result = await pool.query(insertQuery, [name, phone_number, email]);
+    const contact = result.rows[0];
+    console.log(
+      chalk.blue(
+        `Contact added: ${contact.name} - ${contact.phone_number} - ${contact.email}`
+      )
+    );
+  } catch (error) {
+    console.error(chalk.red("Error adding contact:"), error);
   }
 };
 
-const searchContact = (name) => {
-  const contactFound = contacts.find(
-    (contact) => contact.name.toLowerCase() === name.toLowerCase()
-  );
-  if (contactFound) {
-    console.log(chalk.bold.green(`Contact found: ${contactFound.name} - ${contactFound.phone_number} - ${contactFound.email} - ${contactFound.group}`));
-  } else {
-    console.log(chalk.bold.red(`Error: Contact with name "${name}" does not exist.`));
+const viewContacts = async () => {
+  const selectQuery = "SELECT * FROM contacts ORDER BY id ASC;";
+  try {
+    const result = await pool.query(selectQuery);
+
+    if (result.rows.length === 0) {
+      console.log(chalk.red("No contacts available.\n"));
+    } else {
+      const formatted = {};
+      result.rows.forEach((contact) => {
+        formatted[`${contact.id}`] = {
+          Name: contact.name,
+          Phone: contact.phone_number,
+          Email: contact.email,
+        };
+      });
+      console.table(formatted);
+    }
+  } catch (error) {
+    console.error(chalk.red("Error viewing contacts:"), error);
   }
 };
 
-const editContact = (contactNumber, newName, newPhone, newEmail) => {
-  if (contactNumber > 0 && contactNumber <= contacts.length) {
-    const contact = contacts[contactNumber - 1];
-    contact.name = newName.trim() !== "" ? newName : contact.name;
-    contact.phone_number = newPhone.trim() !== "" ? newPhone : contact.phone_number;
-    contact.email = newEmail.trim() !== "" ? newEmail : contact.email;
-    contact.group = newGroup.trim() !== "" ? newGroup : contact.group;
-    saveContacts();
-    console.log(chalk.bold.green("Contact updated."));
-  } else {
-    console.log(chalk.red("Invalid contact number."));
+const editContact = async (id, newName, newPhone, newEmail) => {
+  const getQuery = "SELECT * FROM contacts WHERE id = $1;";
+  const updateQuery = `
+    UPDATE contacts
+    SET name = $1, phone_number = $2, email = $3
+    WHERE id = $4
+    RETURNING *;
+  `;
+  try {
+    const result = await pool.query(getQuery, [id]);
+    if (result.rows.length === 0) {
+      console.log(chalk.red(`No contact found with ID ${id}.`));
+      return;
+    }
+
+    const contact = result.rows[0];
+    const updatedName = newName.trim() !== "" ? newName : contact.name;
+    const updatedPhone = newPhone.trim() !== "" ? newPhone : contact.phone_number;
+    const updatedEmail = newEmail.trim() !== "" ? newEmail : contact.email;
+
+    const updated = await pool.query(updateQuery, [
+      updatedName,
+      updatedPhone,
+      updatedEmail,
+      id,
+    ]);
+
+    console.log(
+      chalk.green(
+        `Contact updated: ${updated.rows[0].name} - ${updated.rows[0].phone_number} - ${updated.rows[0].email}`
+      )
+    );
+  } catch (error) {
+    console.error(chalk.red("Error editing contact:"), error);
+  }
+};
+
+
+
+
+
+const removeContact = async (id) => {
+  const deleteQuery = "DELETE FROM contacts WHERE id = $1 RETURNING *;";
+  try {
+    const result = await pool.query(deleteQuery, [id]);
+    if (result.rowCount > 0) {
+      console.log(chalk.green("Contact removed."));
+    } else {
+      console.log(chalk.red("Invalid contact ID."));
+    }
+  } catch (error) {
+    console.error(chalk.red("Error removing contact:"), error);
+  }
+};
+
+const searchContact = async (name) => {
+  const searchQuery = "SELECT * FROM contacts WHERE LOWER(name) = LOWER($1);";
+  try {
+    const result = await pool.query(searchQuery, [name]);
+    if (result.rows.length > 0) {
+      result.rows.forEach((contact) => {
+        console.log(
+          chalk.bold.green(
+            `Contact found: ${contact.name} - ${contact.phone_number} - ${contact.email}`
+          )
+        );
+      });
+    } else {
+      console.log(
+        chalk.bold.red(`Error: Contact with name "${name}" does not exist.`)
+      );
+    }
+  } catch (error) {
+    console.error(chalk.red("Error searching contact:"), error);
   }
 };
 
 const showMenu = () => {
-  console.log(chalk.bold.blue("\nOptions: 1. Add contact | 2. View contacts | 3. Remove contact | 4. Search contact | 5. Edit contact | 6. Quit"));
-  
-  if (contacts.length > 0) {
-    console.log(chalk.bold.blue("\nExisting Contacts:"));
-    const header = `${"No.".padEnd(5)} ${"Name".padEnd(20)} ${"Phone Number".padEnd(20)} ${"Email".padEnd(20)} ${"group"}`;
-    console.log(chalk.blue(header));
-    console.log(chalk.blue("-".repeat(80)));
-    contacts.forEach((contact, index) => {
-      const row = `${(index + 1).toString().padEnd(5)} ${contact.name.padEnd(20)} ${contact.phone_number.padEnd(20)} ${contact.email.padEnd(20)} ${contact.group}`;
-      console.log(chalk.yellow(row));
-    });
-    console.log("");
-  } else {
-    console.log(chalk.red("\nNo contacts available.\n"));
-  }
+  console.log(
+    chalk.bold.blue(
+      "\nOptions: 1) Add contact 2) View contacts 3) Remove contact 4) Search contacts 5) Edit contact 6) Quit  \n"
+    )
+  );
 };
 
-const main = () => {
+const main = async () => {
   showMenu();
+
+  await viewContacts(); 
+
   rl.question("Enter your choice: ", (choice) => {
     switch (choice) {
       case "1":
         rl.question("Enter name: ", (name) => {
           rl.question("Enter phone number: ", (phone_number) => {
-            rl.question("Enter your group (family,work,personal): ",(group)=>{
-                rl.question("Enter email: ", (email) => {
-                    addContact(name, phone_number, email, group)
-                    main();
-                  });
-                });
-              });
-
-            })
-            
+            rl.question("Enter email: ", async (email) => {
+              await addContact(name, phone_number, email);
+              main(); 
+            });
+          });
+        });
         break;
       case "2":
-        viewContacts();
-        main();
+        main(); 
         break;
       case "3":
-        rl.question("Enter the contact number to remove: ", (num) => {
-          removeContact(parseInt(num));
+        rl.question("Enter the contact ID to remove: ", async (id) => {
+          await removeContact(parseInt(id));
           main();
         });
         break;
       case "4":
-        rl.question("Enter the name to search: ", (name) => {
-          searchContact(name);
+        rl.question("Enter the name to search: ", async (name) => {
+          await searchContact(name);
           main();
-        });
-        break;
-      case "5":
-        rl.question("Enter the contact number to edit: ", (num) => {
-          const contactNumber = parseInt(num);
-          if (contactNumber > 0 && contactNumber <= contacts.length) {
-            rl.question("Enter new name (leave blank to keep unchanged): ", (newName) => {
-              rl.question("Enter new phone number (leave blank to keep unchanged): ", (newPhone) => {
-                rl.question("Enter new Group (leave blank to keep unchanged): ", (newGroup) => {
-                rl.question("Enter new email (leave blank to keep unchanged): ", (newEmail) => {
-                  editContact(contactNumber, newName, newPhone, newEmail, newGroup);
-                  main();
-                });
-              });
-            });
-        })
-          } else {
-            console.log(chalk.red("Invalid contact number."));
-            main();
-          }
         });
         break;
       case "6":
         rl.close();
+        pool
+          .end()
+          .then(() => console.log(chalk.green("Database connection closed.")))
+          .catch((err) => console.error(chalk.red("Error closing the pool:"), err));
         break;
       default:
         console.log(chalk.red("Invalid choice. Please try again."));
         main();
         break;
+        case "5":
+          rl.question("Enter the contact ID to edit: ", async (id) => {
+            const contactId = parseInt(id);
+            rl.question("New name (leave blank to keep current): ", (name) => {
+              rl.question("New phone number (leave blank to keep current): ", (phone) => {
+                rl.question("New email (leave blank to keep current): ", async (email) => {
+                  await editContact(contactId, name, phone, email);
+                  main();
+                });
+              });
+            });
+          });
+          break;
+  
     }
   });
 };
 
-main();
+
+initDB().then(() => {
+  main();
+});
